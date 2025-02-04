@@ -1,0 +1,44 @@
+# Ignore Python virtual environment
+venv/
+.env
+
+# Ignore compiled Python files
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Ignore pytest cache
+.pytest_cache/
+
+# Ignore environment-related files
+.env
+*.env
+.envrc
+
+# Ignore database files (if using SQLite)
+*.sqlite3
+*.db
+
+# Ignore logs and temp files
+*.log
+*.tmp
+
+# Ignore VS Code settings (if using VS Code)
+.vscode/
+
+# Ignore node_modules (if frontend uses npm/yarn)
+frontend/node_modules/
+
+# Ignore package lock files (for frontend)
+frontend/package-lock.json
+frontend/yarn.lock
+
+# Ignore system files (MacOS, Windows)
+.DS_Store
+Thumbs.db
+
+audio_files
+audio_segments
+backend/audio_files
+backend/audio_segments
