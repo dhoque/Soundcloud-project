@@ -6,6 +6,13 @@ import hmac
 import hashlib
 import base64
 import requests
+import json
+import shutil
+import unicodedata
+import concurrent.futures
+
+from fuzzywuzzy import fuzz
+
 from flask import Flask, request, jsonify
 from pydub import AudioSegment
 from dotenv import load_dotenv
@@ -39,6 +46,31 @@ AUDIO_STORAGE_DIR = "audio_files"
 SEGMENTS_DIR = "audio_segments"
 os.makedirs(AUDIO_STORAGE_DIR, exist_ok=True)
 os.makedirs(SEGMENTS_DIR, exist_ok=True)
+
+def fix_encoding(text):
+    """ Fixes character encoding issues in track titles and artist names """
+    try:
+        text = text.encode("latin1").decode("utf-8")  # Fix incorrect encoding
+    except UnicodeEncodeError:
+        pass  # If the conversion fails, just keep the original
+    return unicodedata.normalize("NFKC", text)
+
+def cleanup_audio_files():
+    """ Deletes all locally stored audio files after database update. """
+    print("🗑️ Cleaning up audio files...")
+
+    # Remove entire audio storage directories
+    if os.path.exists(AUDIO_STORAGE_DIR):
+        shutil.rmtree(AUDIO_STORAGE_DIR)
+        print(f"✅ Deleted folder: {AUDIO_STORAGE_DIR}")
+
+    if os.path.exists(SEGMENTS_DIR):
+        shutil.rmtree(SEGMENTS_DIR)
+        print(f"✅ Deleted folder: {SEGMENTS_DIR}")
+
+    # Recreate empty directories for next use
+    os.makedirs(AUDIO_STORAGE_DIR, exist_ok=True)
+    os.makedirs(SEGMENTS_DIR, exist_ok=True)
 
 def download_youtube_audio(youtube_url):
     """ Downloads YouTube audio and saves it as MP3 locally. """
@@ -147,18 +179,52 @@ def recognize_track(file_path):
     print(f"✅ Response received from ACRCloud for {file_path}: {response.json()}")
     return response.json()
 
+def recognize_segment_parallel(segment):
+    """ Recognize track with retry logic """
+    for _ in range(3):  # Retry up to 3 times
+        result = recognize_track(segment)
+        if "metadata" in result:
+            return result
+        time.sleep(2)  # Wait before retrying
+    return {"error": "Failed after 3 retries"}
+
 def merge_consecutive_tracks(tracklist):
-    """ Merges consecutive duplicate tracks in the tracklist. """
+    """ Merges similar track names, preferring the highest confidence version, and removes exact duplicates."""
     if not tracklist:
         return []
 
-    merged_tracks = [tracklist[0]]  # Start with the first track
+    best_tracks = {}  # Store the best version of each track
+    seen_titles = set()  # Keep track of already displayed exact titles
 
-    for i in range(1, len(tracklist)):
-        if tracklist[i]["title"] != merged_tracks[-1]["title"]:  # Only add if different
-            merged_tracks.append(tracklist[i])
+    for track in tracklist:
+        title, confidence = track["title"], track["confidence"]
 
-    return merged_tracks
+        # Remove exact duplicates (only display first occurrence)
+        if title in seen_titles:
+            continue
+
+        # Find if a similar track has already been seen
+        existing_key = None
+        for seen_title in best_tracks.keys():
+            if fuzz.ratio(title.lower(), seen_title.lower()) > 80:
+                existing_key = seen_title
+                break
+
+        if existing_key:
+            existing_track = best_tracks[existing_key]
+            
+            # Compare confidence scores
+            if confidence > existing_track["confidence"]:
+                best_tracks[existing_key] = track
+            elif confidence == existing_track["confidence"]:
+                # Prefer "Remix" if confidence scores are the same
+                if "remix" in title.lower() and "remix" not in existing_track["title"].lower():
+                    best_tracks[existing_key] = track
+        else:
+            best_tracks[title] = track  # No duplicate found, add new entry
+            seen_titles.add(title)
+
+    return list(best_tracks.values())
 
 @app.route("/identify", methods=["POST"])
 def identify():
@@ -183,33 +249,49 @@ def identify():
 
     # Step 4: Recognize each segment using ACRCloud
     tracklist = []
-    for segment in segment_paths:
-        result = recognize_track(segment)
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+        results = executor.map(recognize_segment_parallel, segment_paths)
+
+    for result in results:
         if "metadata" in result and "music" in result["metadata"]:
             track = result["metadata"]["music"][0]
             title = track.get("title", "Unknown Title")
             artist = track["artists"][0]["name"] if "artists" in track else "Unknown Artist"
+            confidence = track.get("score", 0)
+            title = fix_encoding(title)
+            artist = fix_encoding(artist)
 
-            tracklist.append({"title": title, "artist": artist})
-            print(f"🎶 Recognized: {title} - {artist}")
+            tracklist.append({"title": title, "artist": artist, "confidence": confidence})
+            print(f"🎶 Recognized: {title} - {artist} with")
 
     # Merge consecutive duplicates
     tracklist = merge_consecutive_tracks(tracklist)
 
     tracklist_json = json.dumps(tracklist) 
+
     with app.app_context():
+        try:
             existing_entry = Tracklist.query.filter_by(youtube_url=youtube_url).first()
             if existing_entry:
                 existing_entry.tracks = tracklist_json  # Update existing entry
+                print(f"🔄 Updating existing tracklist for {youtube_url}")
             else:
                 new_entry = Tracklist(youtube_url=youtube_url, tracks=tracklist_json)
                 db.session.add(new_entry)
+                print(f"🆕 Adding new tracklist for {youtube_url}")
 
             db.session.commit()
+            print("✅ Database successfully updated.")
+
+        except Exception as e:
+            print(f"❌ Database update failed: {e}")
 
     print("🎼 Final Cleaned Tracklist Generated:")
     for track in tracklist:
         print(f"   🎵 {track['title']} - {track['artist']}")
+
+    cleanup_audio_files()
 
     return jsonify({
         "message": "Track recognition completed",

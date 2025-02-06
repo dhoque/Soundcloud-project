@@ -16,10 +16,6 @@ __pycache__/
 *.env
 .envrc
 
-# Ignore database files (if using SQLite)
-*.sqlite3
-*.db
-
 # Ignore logs and temp files
 *.log
 *.tmp
