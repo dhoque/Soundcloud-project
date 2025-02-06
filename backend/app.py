@@ -111,7 +111,7 @@ def convert_mp3_to_wav(mp3_path):
 
     return wav_file_path, None
 
-def segment_audio(wav_path, segment_length=20, overlap=5):
+def segment_audio(wav_path, segment_length=20, overlap=0):
     """ Splits WAV into smaller segments. """
     print("🔄 Segmenting audio into smaller chunks...")
     segments = []
@@ -189,19 +189,23 @@ def recognize_segment_parallel(segment):
     return {"error": "Failed after 3 retries"}
 
 def merge_consecutive_tracks(tracklist):
-    """ Merges similar track names, preferring the highest confidence version, and removes exact duplicates."""
+    """ 
+    Merges similar track names, preferring the highest confidence version, and removes exact duplicates. 
+    If the exact same title appears multiple times, it keeps the one with the highest confidence.
+    """
     if not tracklist:
         return []
 
     best_tracks = {}  # Store the best version of each track
-    seen_titles = set()  # Keep track of already displayed exact titles
 
     for track in tracklist:
         title, confidence = track["title"], track["confidence"]
 
-        # Remove exact duplicates (only display first occurrence)
-        if title in seen_titles:
-            continue
+        # If exact title is already stored, update only if new confidence is higher
+        if title in best_tracks:
+            if confidence > best_tracks[title]["confidence"]:
+                best_tracks[title] = track
+            continue  # Skip further processing
 
         # Find if a similar track has already been seen
         existing_key = None
@@ -222,7 +226,6 @@ def merge_consecutive_tracks(tracklist):
                     best_tracks[existing_key] = track
         else:
             best_tracks[title] = track  # No duplicate found, add new entry
-            seen_titles.add(title)
 
     return list(best_tracks.values())
 
@@ -261,9 +264,27 @@ def identify():
             confidence = track.get("score", 0)
             title = fix_encoding(title)
             artist = fix_encoding(artist)
+            
+            external_metadata = track.get("external_metadata", {})
+            spotify_link = external_metadata.get("spotify", {}).get("track", {}).get("url", "N/A")
+            deezer_link = external_metadata.get("deezer", {}).get("track", {}).get("url", "N/A")
+            youtube_link = external_metadata.get("youtube", {}).get("vid")
+            youtube_link = f"https://www.youtube.com/watch?v={youtube_link}" if youtube_link else "N/A"
 
-            tracklist.append({"title": title, "artist": artist, "confidence": confidence})
-            print(f"🎶 Recognized: {title} - {artist} with")
+            tracklist.append({
+                "title": title,
+                "artist": artist,
+                "confidence": confidence,
+                "spotify": spotify_link,
+                "deezer": deezer_link,
+                "youtube": youtube_link
+            })            
+            
+            print(f"🎶 Recognized: {title} - {artist} | Confidence: {confidence}%")
+            print(f"   🎵 Spotify: {spotify_link}")
+            print(f"   🎵 Deezer: {deezer_link}")
+            print(f"   🎵 YouTube: {youtube_link}")
+
 
     # Merge consecutive duplicates
     tracklist = merge_consecutive_tracks(tracklist)
