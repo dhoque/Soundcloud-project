@@ -81,14 +81,24 @@ def download_youtube_audio(youtube_url):
     """ Downloads YouTube audio using yt-dlp with authentication cookies. """
     mp3_file_path = os.path.join(AUDIO_STORAGE_DIR, "dj_set.mp3")
 
-    # Write cookies from env variable to a file
     cookies_file = "cookies.txt"
-    if os.getenv("YOUTUBE_COOKIES"):
-        with open(cookies_file, "w") as f:
-            f.write(os.getenv("YOUTUBE_COOKIES").replace(
-                "\\n", "\n"))  # Convert back to multi-line
+    cookies_content = os.getenv("YOUTUBE_COOKIES", "")
+    print(cookies_content)
 
-    print(cookies_file)
+    if cookies_content:
+        with open(cookies_file, "w") as f:
+            # Convert back to multi-line
+            f.write(cookies_content.replace("\\n", "\n"))
+
+        print("✅ Cookies file written successfully.")
+
+    # Print the first few lines to confirm it's written
+    if os.path.exists(cookies_file):
+        with open(cookies_file, "r") as f:
+            print("🔍 First 5 lines of cookies.txt:")
+            for _ in range(5):
+                print(f.readline().strip())
+
     ydl_opts = {
         'format': 'bestaudio/best',
         'extract_audio': True,
