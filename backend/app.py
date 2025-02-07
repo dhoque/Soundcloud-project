@@ -80,7 +80,7 @@ def cleanup_audio_files():
 def download_youtube_audio(youtube_url):
     """ Downloads YouTube audio using yt-dlp with authentication cookies. """
     mp3_file_path = os.path.join(AUDIO_STORAGE_DIR, "dj_set.mp3")
-    cookies_file = "/cookies.txt"  # Use absolute path to root directory
+    cookies_file = "/etc/secrets/cookies.txt"  # Use absolute path to root directory
 
     if not os.path.exists(cookies_file):
         print(f"⚠️ Warning: {cookies_file} not found. Trying without cookies.")
