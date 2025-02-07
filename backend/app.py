@@ -106,7 +106,8 @@ def download_youtube_audio(youtube_url):
         'outtmpl': mp3_file_path,
         'quiet': True,
         # Use cookies if available
-        'cookiefile': cookies_file if os.path.exists(cookies_file) else None
+        'cookies': cookies_file if os.path.exists(cookies_file) else None,
+        'verbose': True,
     }
 
     try:
