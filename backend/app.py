@@ -32,7 +32,7 @@ class Tracklist(db.Model):
 
     def __repr__(self):
         return f"<Tracklist {self.youtube_url}>"
-
+    
 # Load environment variables
 load_dotenv()
 
@@ -149,35 +149,42 @@ def get_acrcloud_signature():
 
     return base64.b64encode(sign).decode(), timestamp
 
-def recognize_track(file_path):
+def recognize_track(file_path, max_retries = 3):
     """ Sends a WAV segment to ACRCloud and returns the recognized track. """
     url = f"https://{ACR_HOST}/v1/identify"
 
-    try:
-        sign, timestamp = get_acrcloud_signature()
-    except ValueError as e:
-        print("❌ ACRCloud API error:", e)
-        return {"error": str(e)}
+    for _ in range(max_retries):
+        try:
+            sign, timestamp = get_acrcloud_signature()
+        except ValueError as e:
+            print("❌ ACRCloud API error:", e)
+            return {"error": str(e)}
 
-    print(f"🎧 Sending segment to ACRCloud: {file_path}...")
+        print(f"🎧 Sending segment to ACRCloud: {file_path}...")
 
-    # Get file size
-    file_size = os.path.getsize(file_path)
+        # Get file size
+        file_size = os.path.getsize(file_path)
 
-    data = {
-        "access_key": ACR_ACCESS_KEY,
-        "data_type": "audio",
-        "signature_version": "1",
-        "signature": sign,
-        "timestamp": timestamp,
-        "sample_bytes": str(file_size)  # Required by ACRCloud
-    }
+        data = {
+            "access_key": ACR_ACCESS_KEY,
+            "data_type": "audio",
+            "signature_version": "1",
+            "signature": sign,
+            "timestamp": timestamp,
+            "sample_bytes": str(file_size)  # Required by ACRCloud
+        }
 
-    with open(file_path, "rb") as audio_file:
-        response = requests.post(url, data=data, files={"sample": audio_file})
+        with open(file_path, "rb") as audio_file:
+            response = requests.post(url, data=data, files={"sample": audio_file})
+        
+        if response:
+            print(f"✅ Response received from ACRCloud for {file_path}: {response.json()}")
+            return response.json()
     
-    print(f"✅ Response received from ACRCloud for {file_path}: {response.json()}")
-    return response.json()
+        # If no result, wait and retry
+        print(f"⚠️ No result from ACRCloud for {file_path}. Retrying...")
+        time.sleep(2)  # Wait before retrying
+    return None
 
 def recognize_segment_parallel(segment):
     """ Recognize track with retry logic """
@@ -210,7 +217,7 @@ def merge_consecutive_tracks(tracklist):
         # Find if a similar track has already been seen
         existing_key = None
         for seen_title in best_tracks.keys():
-            if fuzz.ratio(title.lower(), seen_title.lower()) > 80:
+            if fuzz.partial_ratio(title.lower(), seen_title.lower()) > 80:
                 existing_key = seen_title
                 break
 
@@ -253,43 +260,49 @@ def identify():
     # Step 4: Recognize each segment using ACRCloud
     tracklist = []
 
-    with concurrent.futures.ThreadPoolExecutor(max_workers=5) as executor:
+    with concurrent.futures.ThreadPoolExecutor(max_workers=4) as executor:
         results = executor.map(recognize_segment_parallel, segment_paths)
 
     for result in results:
         if "metadata" in result and "music" in result["metadata"]:
-            track = result["metadata"]["music"][0]
+            track = max(result["metadata"]["music"], key=lambda t: t.get("score", 0))
             title = track.get("title", "Unknown Title")
             artist = track["artists"][0]["name"] if "artists" in track else "Unknown Artist"
             confidence = track.get("score", 0)
             title = fix_encoding(title)
             artist = fix_encoding(artist)
             
+            
+            # Extract streaming links if available
             external_metadata = track.get("external_metadata", {})
-            spotify_link = external_metadata.get("spotify", {}).get("track", {}).get("url", "N/A")
-            deezer_link = external_metadata.get("deezer", {}).get("track", {}).get("url", "N/A")
+            spotify_link = external_metadata.get("spotify", {}).get("track", {}).get("id")
+            deezer_link = external_metadata.get("deezer", {}).get("track", {}).get("id")
             youtube_link = external_metadata.get("youtube", {}).get("vid")
-            youtube_link = f"https://www.youtube.com/watch?v={youtube_link}" if youtube_link else "N/A"
+
+            # Convert IDs to full URLs
+            spotify_url = f"https://open.spotify.com/track/{spotify_link}" if spotify_link else None
+            deezer_url = f"https://www.deezer.com/track/{deezer_link}" if deezer_link else None
+            youtube_url = f"https://www.youtube.com/watch?v={youtube_link}" if youtube_link else None
 
             tracklist.append({
                 "title": title,
                 "artist": artist,
                 "confidence": confidence,
-                "spotify": spotify_link,
-                "deezer": deezer_link,
-                "youtube": youtube_link
+                "spotify": spotify_url,
+                "deezer": deezer_url,
+                "youtube": youtube_url
             })            
             
             print(f"🎶 Recognized: {title} - {artist} | Confidence: {confidence}%")
-            print(f"   🎵 Spotify: {spotify_link}")
-            print(f"   🎵 Deezer: {deezer_link}")
-            print(f"   🎵 YouTube: {youtube_link}")
+            print(f"   🎵 Spotify: {spotify_url}")
+            print(f"   🎵 Deezer: {deezer_url}")
+            print(f"   🎵 YouTube: {youtube_url}")
 
 
     # Merge consecutive duplicates
     tracklist = merge_consecutive_tracks(tracklist)
 
-    tracklist_json = json.dumps(tracklist) 
+    tracklist_json = json.dumps(tracklist)
 
     with app.app_context():
         try:
