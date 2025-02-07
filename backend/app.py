@@ -88,6 +88,7 @@ def download_youtube_audio(youtube_url):
             f.write(os.getenv("YOUTUBE_COOKIES").replace(
                 "\\n", "\n"))  # Convert back to multi-line
 
+    print(cookies_file)
     ydl_opts = {
         'format': 'bestaudio/best',
         'extract_audio': True,
@@ -95,7 +96,7 @@ def download_youtube_audio(youtube_url):
         'outtmpl': mp3_file_path,
         'quiet': True,
         # Use cookies if available
-        'cookies': cookies_file if os.path.exists(cookies_file) else None
+        'cookiefile': cookies_file if os.path.exists(cookies_file) else None
     }
 
     try:
