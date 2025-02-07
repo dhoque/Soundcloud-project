@@ -38,3 +38,6 @@ audio_files
 audio_segments
 backend/audio_files
 backend/audio_segments
+
+cookies.txt
+cookies_env.txt

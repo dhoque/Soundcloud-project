@@ -25,6 +25,7 @@ app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///tracklists.db"
 app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
 db = SQLAlchemy(app)
 
+
 class Tracklist(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     youtube_url = db.Column(db.String, unique=True, nullable=False)
@@ -32,7 +33,8 @@ class Tracklist(db.Model):
 
     def __repr__(self):
         return f"<Tracklist {self.youtube_url}>"
-    
+
+
 # Load environment variables
 load_dotenv()
 
@@ -47,6 +49,7 @@ SEGMENTS_DIR = "audio_segments"
 os.makedirs(AUDIO_STORAGE_DIR, exist_ok=True)
 os.makedirs(SEGMENTS_DIR, exist_ok=True)
 
+
 def fix_encoding(text):
     """ Fixes character encoding issues in track titles and artist names """
     try:
@@ -54,6 +57,7 @@ def fix_encoding(text):
     except UnicodeEncodeError:
         pass  # If the conversion fails, just keep the original
     return unicodedata.normalize("NFKC", text)
+
 
 def cleanup_audio_files():
     """ Deletes all locally stored audio files after database update. """
@@ -72,20 +76,30 @@ def cleanup_audio_files():
     os.makedirs(AUDIO_STORAGE_DIR, exist_ok=True)
     os.makedirs(SEGMENTS_DIR, exist_ok=True)
 
+
 def download_youtube_audio(youtube_url):
-    """ Downloads YouTube audio and saves it as MP3 locally. """
+    """ Downloads YouTube audio using yt-dlp with authentication cookies. """
     mp3_file_path = os.path.join(AUDIO_STORAGE_DIR, "dj_set.mp3")
+
+    # Write cookies from env variable to a file
+    cookies_file = "cookies.txt"
+    if os.getenv("YOUTUBE_COOKIES"):
+        with open(cookies_file, "w") as f:
+            f.write(os.getenv("YOUTUBE_COOKIES").replace(
+                "\\n", "\n"))  # Convert back to multi-line
 
     ydl_opts = {
         'format': 'bestaudio/best',
         'extract_audio': True,
         'audio_format': 'mp3',
         'outtmpl': mp3_file_path,
-        'quiet': True
+        'quiet': True,
+        # Use cookies if available
+        'cookies': cookies_file if os.path.exists(cookies_file) else None
     }
 
     try:
-        print("🔄 Downloading YouTube audio...")
+        print("🔄 Downloading YouTube audio with authentication...")
         with yt_dlp.YoutubeDL(ydl_opts) as ydl:
             ydl.download([youtube_url])
         print(f"✅ Audio downloaded: {mp3_file_path}")
@@ -95,15 +109,18 @@ def download_youtube_audio(youtube_url):
 
     return mp3_file_path, None
 
+
 def convert_mp3_to_wav(mp3_path):
     """ Converts an MP3 file to WAV. """
     wav_file_path = mp3_path.replace(".mp3", ".wav")
 
-    command = ["ffmpeg", "-i", mp3_path, "-ac", "2", "-ar", "44100", "-y", wav_file_path]
+    command = ["ffmpeg", "-i", mp3_path, "-ac",
+               "2", "-ar", "44100", "-y", wav_file_path]
 
     try:
         print("🔄 Converting MP3 to WAV...")
-        subprocess.run(command, stdout=subprocess.PIPE, stderr=subprocess.PIPE, check=True)
+        subprocess.run(command, stdout=subprocess.PIPE,
+                       stderr=subprocess.PIPE, check=True)
         print(f"✅ WAV file created: {wav_file_path}")
     except subprocess.CalledProcessError as e:
         print("❌ Error converting MP3 to WAV:", e)
@@ -111,24 +128,26 @@ def convert_mp3_to_wav(mp3_path):
 
     return wav_file_path, None
 
+
 def segment_audio(wav_path, segment_length=20, overlap=0):
     """ Splits WAV into smaller segments. """
     print("🔄 Segmenting audio into smaller chunks...")
     segments = []
     audio = AudioSegment.from_wav(wav_path)
-    
+
     step = (segment_length - overlap) * 1000  # Convert to milliseconds
     total_length = len(audio)
-    
+
     for start in range(0, total_length, step):
         end = min(start + (segment_length * 1000), total_length)
         segment = audio[start:end]
-        
+
         segment_filename = f"{os.path.basename(wav_path).replace('.wav', '')}_segment_{start//1000}_{end//1000}.wav"
         segment_path = os.path.join(SEGMENTS_DIR, segment_filename)
         segment.export(segment_path, format="wav")
         segments.append(segment_path)
-        print(f"✅ Created segment: {segment_path} ({start//1000}s - {end//1000}s)")
+        print(
+            f"✅ Created segment: {segment_path} ({start//1000}s - {end//1000}s)")
 
         if end == total_length:
             break  # Stop if we've reached the end
@@ -136,20 +155,24 @@ def segment_audio(wav_path, segment_length=20, overlap=0):
     print(f"🎵 Total segments created: {len(segments)}")
     return segments
 
+
 def get_acrcloud_signature():
     """ Generates a signature for ACRCloud authentication. """
     if not ACR_ACCESS_KEY or not ACR_ACCESS_SECRET:
-        raise ValueError("ACRCloud API credentials are missing. Check your .env file.")
+        raise ValueError(
+            "ACRCloud API credentials are missing. Check your .env file.")
 
     timestamp = str(int(time.time()))
     string_to_sign = f"POST\n/v1/identify\n{ACR_ACCESS_KEY}\naudio\n1\n{timestamp}"
 
     secret_bytes = ACR_ACCESS_SECRET.encode("utf-8")
-    sign = hmac.new(secret_bytes, string_to_sign.encode("utf-8"), hashlib.sha1).digest()
+    sign = hmac.new(secret_bytes, string_to_sign.encode(
+        "utf-8"), hashlib.sha1).digest()
 
     return base64.b64encode(sign).decode(), timestamp
 
-def recognize_track(file_path, max_retries = 3):
+
+def recognize_track(file_path, max_retries=3):
     """ Sends a WAV segment to ACRCloud and returns the recognized track. """
     url = f"https://{ACR_HOST}/v1/identify"
 
@@ -175,16 +198,19 @@ def recognize_track(file_path, max_retries = 3):
         }
 
         with open(file_path, "rb") as audio_file:
-            response = requests.post(url, data=data, files={"sample": audio_file})
-        
+            response = requests.post(url, data=data, files={
+                                     "sample": audio_file})
+
         if response:
-            print(f"✅ Response received from ACRCloud for {file_path}: {response.json()}")
+            print(
+                f"✅ Response received from ACRCloud for {file_path}: {response.json()}")
             return response.json()
-    
+
         # If no result, wait and retry
         print(f"⚠️ No result from ACRCloud for {file_path}. Retrying...")
         time.sleep(2)  # Wait before retrying
     return None
+
 
 def recognize_segment_parallel(segment):
     """ Recognize track with retry logic """
@@ -194,6 +220,7 @@ def recognize_segment_parallel(segment):
             return result
         time.sleep(2)  # Wait before retrying
     return {"error": "Failed after 3 retries"}
+
 
 def merge_consecutive_tracks(tracklist):
     """ 
@@ -223,7 +250,7 @@ def merge_consecutive_tracks(tracklist):
 
         if existing_key:
             existing_track = best_tracks[existing_key]
-            
+
             # Compare confidence scores
             if confidence > existing_track["confidence"]:
                 best_tracks[existing_key] = track
@@ -235,6 +262,7 @@ def merge_consecutive_tracks(tracklist):
             best_tracks[title] = track  # No duplicate found, add new entry
 
     return list(best_tracks.values())
+
 
 @app.route("/identify", methods=["POST"])
 def identify():
@@ -265,18 +293,20 @@ def identify():
 
     for result in results:
         if "metadata" in result and "music" in result["metadata"]:
-            track = max(result["metadata"]["music"], key=lambda t: t.get("score", 0))
+            track = max(result["metadata"]["music"],
+                        key=lambda t: t.get("score", 0))
             title = track.get("title", "Unknown Title")
             artist = track["artists"][0]["name"] if "artists" in track else "Unknown Artist"
             confidence = track.get("score", 0)
             title = fix_encoding(title)
             artist = fix_encoding(artist)
-            
-            
+
             # Extract streaming links if available
             external_metadata = track.get("external_metadata", {})
-            spotify_link = external_metadata.get("spotify", {}).get("track", {}).get("id")
-            deezer_link = external_metadata.get("deezer", {}).get("track", {}).get("id")
+            spotify_link = external_metadata.get(
+                "spotify", {}).get("track", {}).get("id")
+            deezer_link = external_metadata.get(
+                "deezer", {}).get("track", {}).get("id")
             youtube_link = external_metadata.get("youtube", {}).get("vid")
 
             # Convert IDs to full URLs
@@ -291,13 +321,13 @@ def identify():
                 "spotify": spotify_url,
                 "deezer": deezer_url,
                 "youtube": youtube_url
-            })            
-            
-            print(f"🎶 Recognized: {title} - {artist} | Confidence: {confidence}%")
+            })
+
+            print(
+                f"🎶 Recognized: {title} - {artist} | Confidence: {confidence}%")
             print(f"   🎵 Spotify: {spotify_url}")
             print(f"   🎵 Deezer: {deezer_url}")
             print(f"   🎵 YouTube: {youtube_url}")
-
 
     # Merge consecutive duplicates
     tracklist = merge_consecutive_tracks(tracklist)
@@ -306,12 +336,14 @@ def identify():
 
     with app.app_context():
         try:
-            existing_entry = Tracklist.query.filter_by(youtube_url=youtube_url).first()
+            existing_entry = Tracklist.query.filter_by(
+                youtube_url=youtube_url).first()
             if existing_entry:
                 existing_entry.tracks = tracklist_json  # Update existing entry
                 print(f"🔄 Updating existing tracklist for {youtube_url}")
             else:
-                new_entry = Tracklist(youtube_url=youtube_url, tracks=tracklist_json)
+                new_entry = Tracklist(
+                    youtube_url=youtube_url, tracks=tracklist_json)
                 db.session.add(new_entry)
                 print(f"🆕 Adding new tracklist for {youtube_url}")
 
@@ -331,6 +363,7 @@ def identify():
         "message": "Track recognition completed",
         "tracklist": tracklist
     })
+
 
 if __name__ == "__main__":
     app.run(debug=True)
