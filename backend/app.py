@@ -80,24 +80,10 @@ def cleanup_audio_files():
 def download_youtube_audio(youtube_url):
     """ Downloads YouTube audio using yt-dlp with authentication cookies. """
     mp3_file_path = os.path.join(AUDIO_STORAGE_DIR, "dj_set.mp3")
+    cookies_file = "/cookies.txt"  # Use absolute path to root directory
 
-    cookies_file = "cookies.txt"
-    cookies_content = os.getenv("YOUTUBE_COOKIES", "")
-    print(cookies_content)
-
-    if cookies_content:
-        with open(cookies_file, "w") as f:
-            # Convert back to multi-line
-            f.write(cookies_content.replace("\\n", "\n"))
-
-        print("✅ Cookies file written successfully.")
-
-    # Print the first few lines to confirm it's written
-    if os.path.exists(cookies_file):
-        with open(cookies_file, "r") as f:
-            print("🔍 First 5 lines of cookies.txt:")
-            for _ in range(5):
-                print(f.readline().strip())
+    if not os.path.exists(cookies_file):
+        print(f"⚠️ Warning: {cookies_file} not found. Trying without cookies.")
 
     ydl_opts = {
         'format': 'bestaudio/best',
@@ -105,9 +91,7 @@ def download_youtube_audio(youtube_url):
         'audio_format': 'mp3',
         'outtmpl': mp3_file_path,
         'quiet': True,
-        # Use cookies if available
-        'cookies': cookies_file if os.path.exists(cookies_file) else None,
-        'verbose': True,
+        'cookies': cookies_file if os.path.exists(cookies_file) else None
     }
 
     try:
